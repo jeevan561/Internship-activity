@@ -1,219 +1,399 @@
-import time
 import customtkinter as ctk
+import tkinter as tk
 from tkinter import Toplevel
 import datetime
+import random
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 
 class RoboController:
+
     def __init__(self, root):   # ✅ FIXED
         self.root = root
-        self.root.title("RoboController Dashboard")
-        self.root.geometry("1000x700")
+        self.root.title("RoboController Realistic Navigation")
+        self.root.geometry("1200x820")
+        self.root.protocol("WM_DELETE_WINDOW", self.safe_close)
 
-        # Data
-        self.robot_name = "RoboX"
-        self.total_distance = 100
+        # Robot state
+        self.robot_name = ""
+        self.total_distance = 0
         self.travelled = 0
-        self.battery = 100
+        self.initialized = False
+
+        # Logging
         self.logs = []
+        self.log_count = 0
+
+        # Movement
+        self.animating = False
+        self.after_id = None
+        self.move_step = 2
+        self.move_delay = 35
+
+        # Road mapping
+        self.road_start_x = 140
+        self.road_end_x = 950
+        self.total_road_pixels = self.road_end_x - self.road_start_x
+
+        # Obstacle control
+        self.obstacle_active = False
+        self.direction_changed = False
+
+        # Lanes
+        self.lanes = {
+            "left": 180,
+            "center": 250,
+            "right": 320
+        }
+        self.current_lane = "center"
 
         self.build_ui()
+
+    # ---------------- SAFE CLOSE ----------------
+    def safe_close(self):
+        self.animating = False
+        if self.after_id:
+            self.root.after_cancel(self.after_id)
+        self.root.destroy()
 
     # ---------------- UI ----------------
     def build_ui(self):
 
-        self.main_card = ctk.CTkFrame(self.root,
-                                      corner_radius=25,
-                                      fg_color="#1e293b")
-        self.main_card.pack(padx=40, pady=40, fill="both", expand=True)
+        title = ctk.CTkLabel(
+            self.root,
+            text="REALISTIC ROBO NAVIGATION SYSTEM",
+            font=("Segoe UI", 28, "bold")
+        )
+        title.pack(pady=15)
 
-        title = ctk.CTkLabel(self.main_card,
-                             text="ROBOCONTROLLER DASHBOARD",
-                             font=("Segoe UI", 26, "bold"))
-        title.pack(pady=20)
+        input_frame = ctk.CTkFrame(self.root)
+        input_frame.pack(pady=10)
 
-        # Robot Name
-        self.name_entry = ctk.CTkEntry(self.main_card,
-                                       width=250,
-                                       placeholder_text="Enter Robot Name")
-        self.name_entry.pack(pady=10)
+        self.name_entry = ctk.CTkEntry(
+            input_frame, width=220,
+            placeholder_text="Robot Name"
+        )
+        self.name_entry.grid(row=0, column=0, padx=10)
 
-        # Target Distance
-        self.distance_entry = ctk.CTkEntry(self.main_card,
-                                           width=250,
-                                           placeholder_text="Enter Target Distance")
-        self.distance_entry.pack(pady=10)
+        self.distance_entry = ctk.CTkEntry(
+            input_frame, width=220,
+            placeholder_text="Target Distance"
+        )
+        self.distance_entry.grid(row=0, column=1, padx=10)
 
-        self.init_button = ctk.CTkButton(self.main_card,
-                                         text="Initialize Robot",
-                                         command=self.initialize_robot,
-                                         fg_color="#22c55e")
-        self.init_button.pack(pady=10)
+        ctk.CTkButton(
+            input_frame,
+            text="Initialize",
+            width=130,
+            command=self.initialize_robot,
+            fg_color="#22c55e"
+        ).grid(row=0, column=2, padx=10)
 
-        # Status
-        self.status_label = ctk.CTkLabel(self.main_card,
-                                         text="Status: Ready",
-                                         font=("Segoe UI", 18, "bold"))
-        self.status_label.pack(pady=15)
+        self.canvas = tk.Canvas(
+            self.root,
+            width=1050,
+            height=420,
+            bg="#0f172a",
+            highlightthickness=0
+        )
+        self.canvas.pack(pady=15)
 
-        # Distance Progress
-        self.distance_progress = ctk.CTkProgressBar(self.main_card,
-                                                    width=700,
-                                                    height=20)
-        self.distance_progress.set(0)
-        self.distance_progress.pack(pady=10)
+        # Road
+        self.canvas.create_rectangle(100, 120, 950, 380,
+                                     fill="#1f2937", outline="")
 
-        self.distance_label = ctk.CTkLabel(self.main_card,
-                                           text="Distance: 0m / 0m (0%)")
+        self.canvas.create_line(100, 120, 100, 380, fill="white", width=4)
+        self.canvas.create_line(950, 120, 950, 380, fill="white", width=4)
+
+        self.canvas.create_line(100, 200, 950, 200,
+                                fill="white", dash=(10, 8), width=2)
+        self.canvas.create_line(100, 290, 950, 290,
+                                fill="white", dash=(10, 8), width=2)
+
+        # Robot
+        self.robot = self.canvas.create_oval(
+            140,
+            self.lanes["center"],
+            200,
+            self.lanes["center"] + 50,
+            fill="#00e5ff"
+        )
+
+        # Obstacle
+        self.obstacle = self.canvas.create_rectangle(
+            0, 0, 0, 0,
+            fill="#f97316",
+            state="hidden"
+        )
+
+        self.human_parts = []
+
+        self.status_label = ctk.CTkLabel(
+            self.root,
+            text="Status: Ready",
+            font=("Segoe UI", 18, "bold")
+        )
+        self.status_label.pack(pady=8)
+
+        self.distance_bar = ctk.CTkProgressBar(self.root, width=900)
+        self.distance_bar.pack(pady=4)
+
+        self.distance_label = ctk.CTkLabel(
+            self.root,
+            text="Distance: 0m / 0m (0%)"
+        )
         self.distance_label.pack()
 
-        # Battery Progress
-        self.battery_progress = ctk.CTkProgressBar(self.main_card,
-                                                   width=700,
-                                                   height=20)
-        self.battery_progress.set(1)
-        self.battery_progress.pack(pady=10)
+        btn_frame = ctk.CTkFrame(self.root)
+        btn_frame.pack(pady=15)
 
-        self.battery_label = ctk.CTkLabel(self.main_card,
-                                          text="Battery: 100%")
-        self.battery_label.pack()
+        buttons = [
+            ("Move", self.move_forward),
+            ("Obstacle", self.spawn_obstacle),
+            ("Human", self.spawn_human),
+            ("Log", self.show_log),
+        ]
 
-        # Buttons
-        btn_frame = ctk.CTkFrame(self.main_card, fg_color="transparent")
-        btn_frame.pack(pady=30)
+        for i, (text, cmd) in enumerate(buttons):
+            ctk.CTkButton(
+                btn_frame,
+                text=text,
+                width=120,
+                command=cmd
+            ).grid(row=0, column=i, padx=10)
 
-        ctk.CTkButton(btn_frame,
-                      text="Move Forward",
-                      fg_color="#22c55e",
-                      command=self.move_forward).grid(row=0, column=0, padx=15)
+    # ---------------- LOG ----------------
+    def log_event(self, event):
+        self.log_count += 1
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
 
-        ctk.CTkButton(btn_frame,
-                      text="Obstacle",
-                      fg_color="#f97316",
-                      command=self.obstacle_detected).grid(row=0, column=1, padx=15)
+        entry = (
+            f"Event #{self.log_count}\n"
+            f"Time       : {timestamp}\n"
+            f"Robot Name : {self.robot_name}\n"
+            f"Action     : {event}\n"
+            f"Lane       : {self.current_lane.upper()}\n"
+            f"Distance   : {round(self.travelled,1)} meters\n"
+            f"{'-'*40}\n"
+        )
 
-        ctk.CTkButton(btn_frame,
-                      text="Human",
-                      fg_color="#ef4444",
-                      command=self.human_detected).grid(row=0, column=2, padx=15)
+        self.logs.append(entry)
 
-        ctk.CTkButton(btn_frame,
-                      text="Show Log",
-                      fg_color="#334155",
-                      command=self.show_log).grid(row=0, column=3, padx=15)
-
-        # Direction Buttons (hidden initially)
-        self.left_button = ctk.CTkButton(self.main_card,
-                                         text="Move Left",
-                                         fg_color="#facc15",
-                                         command=lambda: self.avoid("Left"))
-
-        self.right_button = ctk.CTkButton(self.main_card,
-                                          text="Move Right",
-                                          fg_color="#facc15",
-                                          command=lambda: self.avoid("Right"))
-
-    # ---------------- Logic ----------------
-
+    # ---------------- INITIALIZE ----------------
     def initialize_robot(self):
+
+        self.animating = False
+        if self.after_id:
+            self.root.after_cancel(self.after_id)
+
         try:
-            self.robot_name = self.name_entry.get()
+            self.robot_name = self.name_entry.get().strip()
             self.total_distance = float(self.distance_entry.get())
             self.travelled = 0
-            self.battery = 100
+            self.initialized = True
+
+            self.obstacle_active = False
+            self.direction_changed = False
+
+            self.canvas.itemconfig(self.obstacle, state="hidden")
+
+            for part in self.human_parts:
+                self.canvas.delete(part)
+            self.human_parts.clear()
+
+            self.current_lane = "center"
+
+            self.canvas.coords(
+                self.robot,
+                self.road_start_x,
+                self.lanes["center"],
+                self.road_start_x + 60,
+                self.lanes["center"] + 50
+            )
+
             self.logs.clear()
+            self.log_count = 0
+
+            self.status_label.configure(text="Robot Ready")
+            self.log_event("System Initialized")
             self.update_ui()
-            self.status_label.configure(text=f"{self.robot_name} Initialized")
-        except:
-            self.status_label.configure(text="Enter valid details")
 
+        except ValueError:
+            self.status_label.configure(text="Enter valid inputs")
+
+    # ---------------- OBSTACLE ----------------
+    def spawn_obstacle(self):
+        if not self.initialized:
+            return
+
+        rx1, ry1, rx2, ry2 = self.canvas.coords(self.robot)
+        obstacle_x = rx2 + 150
+
+        self.canvas.coords(
+            self.obstacle,
+            obstacle_x,
+            self.lanes["center"] + 10,
+            obstacle_x + 40,
+            self.lanes["center"] + 50
+        )
+
+        self.canvas.itemconfig(self.obstacle, state="normal")
+
+        self.obstacle_active = True
+        self.direction_changed = False
+
+        self.log_event("Obstacle Detected")
+
+    # ---------------- HUMAN ----------------
+    def spawn_human(self):
+        if not self.initialized:
+            return
+
+        rx1, ry1, rx2, ry2 = self.canvas.coords(self.robot)
+        base_x = rx2 + 300
+        base_y = self.lanes["center"] - 20
+
+        for part in self.human_parts:
+            self.canvas.delete(part)
+        self.human_parts.clear()
+
+        head = self.canvas.create_oval(base_x, base_y,
+                                       base_x + 25, base_y + 25,
+                                       fill="white")
+
+        body = self.canvas.create_line(base_x + 12, base_y + 25,
+                                       base_x + 12, base_y + 70,
+                                       fill="white", width=3)
+
+        arms = self.canvas.create_line(base_x - 10, base_y + 45,
+                                       base_x + 35, base_y + 45,
+                                       fill="white", width=3)
+
+        leg1 = self.canvas.create_line(base_x + 12, base_y + 70,
+                                       base_x - 5, base_y + 100,
+                                       fill="white", width=3)
+
+        leg2 = self.canvas.create_line(base_x + 12, base_y + 70,
+                                       base_x + 30, base_y + 100,
+                                       fill="white", width=3)
+
+        self.human_parts = [head, body, arms, leg1, leg2]
+
+        self.log_event("Human Detected")
+
+        self.root.after(10000, self.remove_human)
+
+    def remove_human(self):
+        for part in self.human_parts:
+            self.canvas.delete(part)
+        self.human_parts.clear()
+        self.log_event("Human Cleared After 10 Seconds")
+
+        if not self.animating:
+            self.move_forward()
+
+    # ---------------- MOVE ----------------
     def move_forward(self):
-        if self.battery <= 0:
-            self.status_label.configure(text="Battery Dead")
+        if not self.initialized or self.animating:
             return
 
-        if self.travelled >= self.total_distance:
-            self.status_label.configure(text="Target Already Reached")
+        self.animating = True
+        self.animate_step()
+
+    def animate_step(self):
+
+        if not self.animating:
             return
 
-        self.travelled += 10
-        self.battery -= 5
+        rx1, ry1, rx2, ry2 = self.canvas.coords(self.robot)
 
-        # Prevent overflow
-        self.travelled = min(self.travelled, self.total_distance)
-        self.battery = max(self.battery, 0)
+        # Human stop
+        if self.human_parts:
+            hx1, hy1, hx2, hy2 = self.canvas.bbox(self.human_parts[0])
+            if rx2 >= hx1:
+                self.status_label.configure(text="Stopped: Human Ahead")
+                self.log_event("Stopped due to Human")
+                self.animating = False
+                return
 
-        self.add_log("Moved Forward 10m")
+        # Obstacle avoidance
+        if self.obstacle_active and not self.direction_changed:
+            ox1, oy1, ox2, oy2 = self.canvas.coords(self.obstacle)
+            if rx2 >= ox1 - 40:
+                new_lane = random.choice(["left", "right"])
+                self.change_lane(new_lane)
+                self.direction_changed = True
+                self.log_event(f"Auto Changed Lane → {new_lane.upper()}")
+
+        # Target reached
+        if rx2 >= self.road_end_x:
+            self.travelled = self.total_distance
+            self.update_ui()
+            self.animating = False
+            self.status_label.configure(text="Target Reached")
+            self.log_event("Target Reached")
+            return
+
+        self.canvas.move(self.robot, self.move_step, 0)
+
+        rx1, ry1, rx2, ry2 = self.canvas.coords(self.robot)
+        pixels_travelled = rx2 - self.road_start_x
+        self.travelled = (
+            (pixels_travelled / self.total_road_pixels)
+            * self.total_distance
+        )
+
         self.update_ui()
 
-    def obstacle_detected(self):
-        self.status_label.configure(text="Obstacle Detected! Choose Direction")
-        self.left_button.pack(pady=5)
-        self.right_button.pack(pady=5)
+        self.after_id = self.root.after(
+            self.move_delay,
+            self.animate_step
+        )
 
-    def avoid(self, direction):
-        self.left_button.pack_forget()
-        self.right_button.pack_forget()
+    # ---------------- CHANGE LANE ----------------
+    def change_lane(self, lane):
+        self.current_lane = lane
+        rx1, ry1, rx2, ry2 = self.canvas.coords(self.robot)
+        new_y = self.lanes[lane]
+        self.canvas.coords(self.robot, rx1, new_y, rx2, new_y + 50)
 
-        if self.battery <= 0:
-            self.status_label.configure(text="Battery Dead")
-            return
-
-        self.travelled += 5
-        self.battery -= 5
-
-        self.travelled = min(self.travelled, self.total_distance)
-        self.battery = max(self.battery, 0)
-
-        self.add_log(f"Obstacle Avoided → Moved {direction} 5m")
-        self.update_ui()
-
-    def human_detected(self):
-        self.status_label.configure(text="🚨 Human Detected! STOPPED")
-        self.add_log("Stopped due to Human Detection")
-
-    def update_ui(self):
-        percent = (self.travelled / self.total_distance) if self.total_distance else 0
-        self.distance_progress.set(percent)
-        self.battery_progress.set(self.battery / 100)
-
-        self.distance_label.configure(
-            text=f"Distance: {self.travelled}m / {self.total_distance}m ({round(percent*100)}%)")
-
-        self.battery_label.configure(
-            text=f"Battery: {self.battery}%")
-
-        if self.travelled >= self.total_distance:
-            self.status_label.configure(text="🎯 Target Reached!")
-
-    def add_log(self, message):
-        time_stamp = datetime.datetime.now().strftime("%H:%M:%S")
-        self.logs.append(f"[{time_stamp}] {message}")
-
+    # ---------------- SHOW LOG ----------------
     def show_log(self):
         log_window = Toplevel(self.root)
         log_window.title("Mission Log")
-        log_window.geometry("600x500")
+        log_window.geometry("650x500")
 
-        text_box = ctk.CTkTextbox(log_window,
-                                  width=550,
-                                  height=450)
-        text_box.pack(pady=20, padx=20)
+        textbox = ctk.CTkTextbox(log_window, width=600, height=450)
+        textbox.pack(padx=20, pady=20)
 
-        if self.logs:
-            for log in self.logs:
-                text_box.insert("end", log + "\n")
+        if not self.logs:
+            textbox.insert("end", "No events recorded yet.")
         else:
-            text_box.insert("end", "No logs available.")
+            for entry in self.logs:
+                textbox.insert("end", entry)
 
-        text_box.configure(state="disabled")
+        textbox.configure(state="disabled")
+
+    # ---------------- UPDATE UI ----------------
+    def update_ui(self):
+        percent = (
+            self.travelled / self.total_distance
+            if self.total_distance > 0 else 0
+        )
+
+        self.distance_bar.set(percent)
+
+        self.distance_label.configure(
+            text=f"Distance: {round(self.travelled,1)}m / "
+                 f"{self.total_distance}m "
+                 f"({round(percent*100)}%)"
+        )
 
 
-# ✅ FIXED MAIN CHECK
-if __name__ == "__main__":
+# ---------------- MAIN ----------------
+if __name__ == "__main__":   # ✅ FIXED
     root = ctk.CTk()
     app = RoboController(root)
     root.mainloop()
