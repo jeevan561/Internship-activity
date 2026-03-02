@@ -1,0 +1,11 @@
+StudentID,Name,Age,Gender,StudyHours,ExamScore,Department
+1,Alice,20,Female,5,78,Computer Science
+2,Bob,21,Male,6,85,Electronics
+3,Charlie,19,Male,4,72,Mechanical
+4,David,22,Male,7,90,Computer Science
+5,Eva,20,Female,3,65,Civil
+6,Frank,23,Male,8,95,Electronics
+7,Grace,21,Female,6,88,Computer Science
+8,Helen,20,Female,5,80,Mechanical
+9,Ian,22,Male,,70,Civil
+10,Jenny,19,Female,4,,Electronics
